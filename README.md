@@ -1,6 +1,6 @@
 # Terminal Lyrics
 
-A Linux terminal app that shows lyrics for the song you are playing.
+A Linux terminal that shows lyrics for the song you are playing.
 Built with C++17 and Shell scripts, with lyrics from LRCLIB.
 
 ![Terminal Lyrics interface](ui.jpg)
