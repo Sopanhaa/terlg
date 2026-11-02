@@ -3,6 +3,8 @@
 A Linux terminal app that shows lyrics for the song you are playing.
 Built with C++17 and Shell scripts, with lyrics from LRCLIB.
 
+![Terminal Lyrics interface](ui.jpg)
+
 ## 1. Install dependencies
 
 On Debian or Ubuntu:
