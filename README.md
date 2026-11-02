@@ -3,20 +3,29 @@
 A Linux terminal app that shows lyrics for the song you are playing.
 Built with C++17 and Shell scripts, with lyrics from LRCLIB.
 
-## Install
+## 1. Install dependencies
 
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install build-essential curl playerctl
+sudo apt install git build-essential curl playerctl
 ```
 
 You need internet access to load lyrics.
 
-## Run
+## 2. Clone the project
+
+Open a terminal and run:
+
+```bash
+git clone https://github.com/Sopanhaa/terlg.git
+cd terlg
+```
+
+## 3. Run the app
 
 Start playing music in Spotify, VLC, or a browser that supports Linux media
-controls. From the project folder, run:
+controls. Inside the `terlg` folder, run:
 
 ```bash
 ./run.sh
