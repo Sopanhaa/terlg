@@ -1,41 +1,37 @@
-# Legacy Python cache files
-__pycache__/
-*.py[cod]
-.pytest_cache/
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# Environment variables and secrets
-.env
-.env.*
-!.env.example
-
-# IDE files
-.vscode/
-.idea/
-
-# Test and coverage reports
-.coverage
-htmlcov/
-.tox/
-
-# Build files
-build/
-dist/
-*.egg-info/
+# C++ build output
+/build/
+/dist/
 *.o
 *.d
 *.a
 *.so
 *.so.*
 
-# OS files
+# C++ coverage reports
+*.gcda
+*.gcno
+*.gcov
+
+# Local environment variables
+.env
+.env.*
+!.env.example
+
+# Editor settings and backup files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Operating system files
 .DS_Store
 Thumbs.db
 
-# Temporary files
-*.log
-*.tmp
+# Leftover caches from the previous Python version
+__pycache__/
+*.py[cod]
