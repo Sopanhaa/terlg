@@ -1,8 +1,9 @@
 # Terminal Lyrics
 
-A Linux terminal app that displays lyrics for the song currently playing in an
-MPRIS-compatible music player or browser. It reads playback information through
-`playerctl` and searches LRCLIB for synchronized or plain lyrics.
+A C++17 Linux terminal app that displays lyrics for the song currently playing
+in an MPRIS-compatible music player or browser. It reads playback information
+through `playerctl` and searches LRCLIB for synchronized or plain lyrics. Shell
+scripts build, run, and test the app; Python is no longer required.
 
 ## Features
 
@@ -41,44 +42,47 @@ Use a name from that list with `--player` to choose a specific source.
 
 ## Requirements
 
-- Python 3.10 or later
-- Python's standard-library `curses` module, normally included with Linux Python
-  installations
-- The Linux package `playerctl`
+- A C++17 compiler, such as GCC 9 or newer, and GNU Make
+- The Linux packages `playerctl` and `curl`
 - A running MPRIS-compatible music player or browser with an active media session
 - Internet access to look up lyrics through LRCLIB
 - A terminal at least 30 columns wide and 8 rows high
 
-The full theme uses 256 colors. Simpler color and monochrome terminals use
-fallback styles. Font size is controlled by your terminal.
+The display uses POSIX terminal input and ANSI escape sequences, so no curses,
+JSON, or HTTP development libraries are needed. Use a UTF-8 terminal for Unicode
+lyrics. The full theme uses 256 colors; other terminals use fallback styles.
+Set `NO_COLOR=1` to use monochrome highlighting. Font size is controlled by your
+terminal.
 
 On Debian or Ubuntu, install the required packages:
 
 ```bash
-sudo apt install python3 playerctl
+sudo apt install build-essential curl playerctl
 ```
 
-Check that `python3 --version` reports Python 3.10 or newer. No `pip` dependencies
-are required; the project uses Python's standard library.
+The app uses the C++ standard library and Linux/POSIX APIs. No package downloads
+are needed during the build.
 
 ## Run
 
 Start playing music, then run this from the project directory:
 
 ```bash
-python3 lyrics.py
+./run.sh
 ```
 
-Or run it as a module:
+`run.sh` builds the application if necessary, then forwards all arguments to it.
+You can also build and run it separately:
 
 ```bash
-python3 -m terminal_lyrics
+./build.sh
+./build/terminal-lyrics
 ```
 
 For example, select Brave and refresh the display once per second:
 
 ```bash
-python3 lyrics.py --player brave --refresh 1
+./run.sh --player brave --refresh 1
 ```
 
 | Option | Behavior |
@@ -128,7 +132,7 @@ last for the session; `0` clears them.
 For example, start with lyrics 1.5 seconds earlier:
 
 ```bash
-python3 lyrics.py --player brave --offset 1.5
+./run.sh --player brave --offset 1.5
 ```
 
 Only timestamped lyrics can follow playback. The **Plain lyrics** mode has no
@@ -166,7 +170,10 @@ another search for the same track. Quitting does not wait for a lyrics request.
 
 | Problem | What to check |
 | --- | --- |
+| Build fails because `g++` or `make` is missing | Install your distribution's C++ build tools, such as `build-essential` on Debian/Ubuntu. |
 | `playerctl is missing` | Install `playerctl` using your distribution's package manager. |
+| `curl is missing` | Install `curl` using your distribution's package manager. |
+| App requires an interactive terminal | Run `./run.sh` directly in a terminal; avoid piping or redirecting its display. |
 | No active player or song | Start playback and check `playerctl --list-all`; use `--player NAME` if needed. |
 | Wrong player is selected | Pass the intended player name with `--player`. |
 | Lyrics were not found | The track may be missing from LRCLIB, or its title/artist metadata may not match. |
@@ -179,27 +186,36 @@ another search for the same track. Quitting does not wait for a lyrics request.
 
 ## Project layout
 
-- `terminal_lyrics/player.py`: `playerctl` integration and track metadata
-- `terminal_lyrics/playback_clock.py`: playback interpolation, pause handling, and seek correction
-- `terminal_lyrics/lyrics_service.py`: LRCLIB search and LRC parsing
-- `terminal_lyrics/lyrics_loader.py`: background loading, cancellation, and session cache
-- `terminal_lyrics/ui.py`: curses display and keyboard controls
-- `terminal_lyrics/cli.py`: command-line arguments and startup checks
-- `terminal_lyrics/models.py`: track metadata and change detection
-- `lyrics.py` and `terminal_lyrics/__main__.py`: application entry points
-- `tests/`: standard-library unit tests
+- `src/main.cpp`: command-line arguments and startup checks
+- `src/player.cpp`: `playerctl` integration and track metadata
+- `src/playback_clock.cpp`: playback interpolation, pauses, and seeks
+- `src/lyrics_service.cpp`: LRCLIB search, response decoding, and LRC parsing
+- `src/lyrics_loader.cpp`: background loading, cancellation, and session cache
+- `src/process.cpp`: subprocess execution with timeouts and cancellation
+- `src/ui.cpp`: terminal display and keyboard controls
+- `src/models.cpp`: track metadata and change detection
+- `include/terminal_lyrics/`: C++ public headers
+- `build.sh`, `run.sh`, `test.sh`: POSIX shell entry points
+- `Makefile`: incremental build and test targets
+- `tests/`: C++ and shell tests
 
 ## Tests
 
 Run the test suite from the project directory:
 
 ```bash
-python3 -m unittest discover -s tests
+./test.sh
 ```
 
-Tests cover lyric parsing, video and cover searches, fallback matching, search
-budgets, cancellation, background loading, caching, playback shortcuts, wrapping,
-verse spacing, scrolling, playback clocks, browser position units, duration
-matching, timing controls, monochrome highlighting, Unicode bounds, and terminal
-resize handling. Service and player requests are mocked in the tests.
+Tests cover lyric parsing, video and cover searches, fallback matching, HTTP
+errors and cancellation, background loading and caching, playback clocks,
+metadata units, duration matching, safe subprocess arguments and timeouts,
+Unicode wrapping, keyboard controls, and command-line validation. An offline
+pseudo-terminal test exercises the complete application with fake `playerctl`
+and `curl` commands, including resize and terminal restoration. No network
+connection or active music player is needed to run the tests.
+
+To rebuild from scratch, use `make clean` followed by `./build.sh`. Build output
+stays in the ignored `build/` directory. You can choose a compiler with
+`./build.sh CXX=clang++` or pass Make options such as `./build.sh -j2`.
 

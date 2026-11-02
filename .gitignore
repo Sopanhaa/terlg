@@ -1,4 +1,4 @@
-# Python cache
+# Legacy Python cache files
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -26,6 +26,11 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+*.o
+*.d
+*.a
+*.so
+*.so.*
 
 # OS files
 .DS_Store
