@@ -395,10 +395,10 @@ bool wait_retry(double delay, const Cancel& cancel) {
 struct Record {
     Json json;
     bool artist_matches = false;
+    bool usable = false;
     std::string title() const { return json.string("trackName"); }
     std::string synced() const { return json.string("syncedLyrics"); }
     std::string plain() const { return json.string("plainLyrics"); }
-    bool has_text() const { return !synced().empty() || !plain().empty(); }
     bool readable() const { return !trim(plain()).empty() || !parse_lrc(synced()).empty(); }
 };
 
@@ -450,17 +450,16 @@ std::vector<TimedLine> parse_lrc(const std::string& text) {
         expanded_bytes += timestamps.size() * lyric.size();
         for (double timestamp : timestamps) lines.emplace_back(timestamp, lyric);
     }
-    std::sort(lines.begin(), lines.end());
+    std::stable_sort(lines.begin(), lines.end(), [](const auto& left, const auto& right) {
+        return left.first < right.first;
+    });
     return lines;
 }
 
 int active_line(const std::vector<TimedLine>& lyrics, double position) {
-    int current = -1;
-    for (std::size_t i = 0; i < lyrics.size(); ++i) {
-        if (lyrics[i].first > position) break;
-        current = static_cast<int>(i);
-    }
-    return current;
+    const auto next = std::upper_bound(lyrics.begin(), lyrics.end(), position,
+        [](double time, const TimedLine& line) { return time < line.first; });
+    return next == lyrics.begin() ? -1 : static_cast<int>(next - lyrics.begin() - 1);
 }
 
 std::vector<std::pair<std::string, std::string>> search_candidates(const Track& track) {
@@ -525,7 +524,7 @@ LyricsResult fetch_lyrics(const Track& track, const Cancel& cancel, HttpGet get)
     for (const auto& candidate : searches) if (!candidate.second.empty()) known_artists.emplace_back(candidate.first, artist_keys(candidate.second));
     std::vector<Record> records;
     std::map<std::string, std::size_t> identities;
-    auto have_lyrics = [&] { return std::any_of(records.begin(), records.end(), [](const Record& record) { return record.readable(); }); };
+    auto have_lyrics = [&] { return std::any_of(records.begin(), records.end(), [](const Record& record) { return record.usable; }); };
     std::string error;
     for (const auto& candidate : searches) {
         if (cancelled(cancel)) return {};
@@ -579,17 +578,19 @@ LyricsResult fetch_lyrics(const Track& track, const Cancel& cancel, HttpGet get)
             const auto* id = json.get("id");
             auto key = id && (id->kind == Json::Kind::string || id->kind == Json::Kind::number || id->kind == Json::Kind::boolean)
                        ? "id:" + id->value : "record:" + identity(json);
+            Record record{std::move(json), matches};
+            record.usable = record.readable();
             auto found = identities.find(key);
             if (found == identities.end()) {
                 identities[key] = records.size();
-                records.push_back({std::move(json), matches});
-            } else records[found->second] = {std::move(json), matches};
+                records.push_back(std::move(record));
+            } else records[found->second] = std::move(record);
         }
         bool exact = std::any_of(records.begin(), records.end(), [&](const Record& record) {
-            return record.artist_matches && normalized(record.title()) == normalized(title) && record.has_text() && timing_compatible(record, track);
+            return record.artist_matches && normalized(record.title()) == normalized(title) && record.usable && timing_compatible(record, track);
         });
         if (exact) break;
-        if (artist.empty() && have_lyrics() && std::any_of(records.begin(), records.end(), [&](const Record& record) { return timing_compatible(record, track) && record.has_text(); })) break;
+        if (artist.empty() && have_lyrics() && std::any_of(records.begin(), records.end(), [&](const Record& record) { return timing_compatible(record, track) && record.usable; })) break;
     }
     if (!error.empty() && !have_lyrics()) return {{}, {}, error};
     if (records.empty()) return {{}, {}, "Lyrics were not found."};
@@ -600,13 +601,14 @@ LyricsResult fetch_lyrics(const Track& track, const Cancel& cancel, HttpGet get)
         const double difference = duration_difference(record, track);
         auto duration = std::make_tuple(difference < 0 ? 0 : difference <= 2 ? 1 : -1,
                                        difference >= 0 && difference <= 2 && !record.synced().empty(), difference < 0 ? 0.0 : -difference);
-        return std::make_tuple(record.has_text(), (exact_title(record) ? 2 : 0) + (record.artist_matches ? 4 : 0), duration,
+        return std::make_tuple(record.usable, (exact_title(record) ? 2 : 0) + (record.artist_matches ? 4 : 0), duration,
                                !track.album.empty() && folded(record.json.string("albumName")) == folded(track.album), !record.synced().empty());
     };
     auto best = std::max_element(records.begin(), records.end(), [&](const Record& left, const Record& right) { return rank(left) < rank(right); });
     auto synced = parse_lrc(best->synced());
     auto plain = split_lines(trim(best->plain()));
-    if (!synced.empty() && best->artist_matches && exact_title(*best)) return {std::move(synced), {}, {}};
+    if (!synced.empty() && best->artist_matches && exact_title(*best) && timing_compatible(*best, track))
+        return {std::move(synced), {}, {}};
     if (!synced.empty() && plain.empty()) {
         std::string text;
         for (const auto& line : synced) { if (!text.empty()) text += '\n'; text += line.second; }

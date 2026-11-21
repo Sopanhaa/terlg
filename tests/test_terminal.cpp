@@ -44,13 +44,15 @@ public:
                 "  [ \"${2-}\" = 'fixture' ] || exit 9\n"
                 "  shift 2\n"
                 "fi\n"
+                "if [ \"${TL_TEST_NO_PLAYER-}\" = 1 ]; then exit 1; fi\n"
                 "case \"${1-}\" in\n"
                 "  metadata)\n"
                 "    [ \"${2-}\" = '--format' ] || exit 8\n"
-                "    position=1500000; duration=120000000\n"
+                "    position=1500000; duration=120000000; status=Playing\n"
                 "    if [ \"${TL_TEST_EXTREME-}\" = 1 ]; then position=1e308; duration=1e308; fi\n"
+                "    if [ \"${TL_TEST_PAUSED-}\" = 1 ]; then status=Paused; fi\n"
                 "    printf '%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\n' "
-                "'Fixture Song' 'Fixture Artist' 'Fixture Album' 'fixture' 'Playing' "
+                "'Fixture Song' 'Fixture Artist' 'Fixture Album' 'fixture' \"$status\" "
                 "\"$position\" \"$duration\" '/fixture/track'\n"
                 "    ;;\n"
                 "  play-pause|next|previous) printf '%s\\n' \"$1\" >> \"$TL_TEST_COMMAND_LOG\" ;;\n"
@@ -62,10 +64,17 @@ public:
                 if (line) synced += "\\n";
                 synced += "[00:" + number + ".00]Fixture lyric " + number;
             }
-            const std::string json = "[{\"id\":1,\"trackName\":\"Fixture Song\","
-                "\"artistName\":\"Fixture Artist\",\"albumName\":\"Fixture Album\","
-                "\"duration\":120,\"syncedLyrics\":\"" + synced + "\"}]";
-            script("curl", "#!/bin/sh\nprintf '%s\\n200' '" + json + "'\n");
+            const std::string record = "[{\"id\":1,\"trackName\":\"Fixture Song\","
+                "\"artistName\":\"Fixture Artist\",\"albumName\":\"Fixture Album\",";
+            const std::string lyrics = "\"syncedLyrics\":\"" + synced + "\"}]";
+            const std::string json = record + "\"duration\":120," + lyrics;
+            const std::string unknown_duration_json = record + lyrics;
+            script("curl", "#!/bin/sh\n"
+                "if [ \"${TL_TEST_EXTREME-}\" = 1 ]; then\n"
+                "  printf '%s\\n200' '" + unknown_duration_json + "'\n"
+                "else\n"
+                "  printf '%s\\n200' '" + json + "'\n"
+                "fi\n");
         } catch (...) {
             std::filesystem::remove_all(directory);
             throw;
@@ -89,7 +98,8 @@ private:
 
 class Session {
 public:
-    Session(const std::string& binary, const Fixture& fixture, bool monochrome = false, bool extreme = false) {
+    Session(const std::string& binary, const Fixture& fixture, bool monochrome = false, bool extreme = false,
+            bool paused = false, bool no_player = false) {
         try {
             master_ = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC | O_NONBLOCK);
             require(master_ >= 0, "Cannot open a pseudo-terminal: " + std::string(std::strerror(errno)));
@@ -125,6 +135,10 @@ public:
                 ::setenv("TL_TEST_COMMAND_LOG", fixture.command_log.c_str(), 1);
                 if (extreme) ::setenv("TL_TEST_EXTREME", "1", 1);
                 else ::unsetenv("TL_TEST_EXTREME");
+                if (paused) ::setenv("TL_TEST_PAUSED", "1", 1);
+                else ::unsetenv("TL_TEST_PAUSED");
+                if (no_player) ::setenv("TL_TEST_NO_PLAYER", "1", 1);
+                else ::unsetenv("TL_TEST_NO_PLAYER");
                 if (monochrome) ::setenv("NO_COLOR", "1", 1);
                 else ::unsetenv("NO_COLOR");
                 ::execl(binary.c_str(), binary.c_str(), "--player", "fixture", "--refresh", extreme ? "1e308" : "0.1",
@@ -165,6 +179,13 @@ public:
         const auto after = output.size();
         send(keys);
         expect(text, after);
+    }
+
+    void expect_quiet(std::chrono::milliseconds duration) {
+        const auto before = output.size();
+        const auto deadline = Clock::now() + duration;
+        while (Clock::now() < deadline) pump();
+        require(output.size() == before, "Unchanged paused playback caused redundant terminal redraws");
     }
 
     void resize(unsigned short rows, unsigned short columns) {
@@ -306,6 +327,21 @@ int main() {
             session.expect("Fixture lyric 00");
             session.signal(SIGTERM);
             session.wait_exit(128 + SIGTERM);
+        }
+        {
+            Session session(binary, fixture, false, false, false, true);
+            session.expect("Waiting for music");
+            session.expect("No active music player found.");
+            session.expect_quiet(std::chrono::milliseconds(250));
+            session.send("q");
+            session.wait_exit(0);
+        }
+        {
+            Session session(binary, fixture, false, false, true);
+            session.expect("Fixture lyric 00");
+            session.expect_quiet(std::chrono::milliseconds(350));
+            session.send("q");
+            session.wait_exit(0);
         }
         {
             Session session(binary, fixture, false, true);

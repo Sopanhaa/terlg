@@ -37,6 +37,10 @@ void test_lrc() {
     require(std::abs(parsed[0].first - 1.001) < 1e-9 && parsed[0].second == "Repeated", "LRC millisecond precision");
     require(parsed[1] == tl::TimedLine(2.5, "Later") && parsed[2] == tl::TimedLine(3.0, "Repeated"), "LRC order");
     require(parsed[3].second == "Last", "LRC trim");
+    const auto simultaneous = tl::parse_lrc("[00:01]Zebra\n[00:01]Alpha\n[00:02]Later");
+    require(simultaneous.size() == 3 && simultaneous[0].second == "Zebra" &&
+            simultaneous[1].second == "Alpha", "equal timestamps preserve their original order");
+    require(tl::active_line(simultaneous, 1.0) == 1, "active line includes all equal timestamps");
     require(tl::active_line(parsed, 1.0) == -1 && tl::active_line(parsed, 2.5) == 1 && tl::active_line({}, 100) == -1, "active line boundaries");
     require(tl::parse_lrc("[000:01]bad\n[00:01.1234]bad\nplain").empty(), "malformed tags ignored");
     std::string repeated;
@@ -111,6 +115,23 @@ void test_cover_and_plain_fallbacks() {
     require(result.synced == std::vector<tl::TimedLine>{{7, "Cover"}}, "band owner prefix matches uploader");
 }
 
+void test_readable_record_selection() {
+    auto item = track("Song", "Artist", 180);
+    auto result = fetch(R"json([{"id":1,"trackName":"Song","artistName":"Artist","duration":180,"syncedLyrics":"not lrc"},{"id":2,"trackName":"Song","artistName":"Artist","duration":181,"plainLyrics":"Readable recovery"}])json", item);
+    require(result.plain == std::vector<std::string>{"Readable recovery"},
+            "an unreadable timed record must not outrank readable lyrics");
+
+    int calls = 0;
+    result = tl::fetch_lyrics(item, {}, [&](const std::string& url, double, const tl::Cancel&) {
+        ++calls;
+        if (url.find("artist_name") != std::string::npos)
+            return response(R"json([{"trackName":"Song","artistName":"Artist","duration":180,"syncedLyrics":"not lrc"}])json");
+        return response(exact);
+    });
+    require(calls == 2 && result.synced == std::vector<tl::TimedLine>{{1, "First line"}},
+            "an invalid timed response must not stop fallback searches");
+}
+
 void test_duration_ranking() {
     auto item = track("Song", "Artist", 180);
     item.album = "Video album";
@@ -122,6 +143,9 @@ void test_duration_ranking() {
     require(result.synced == std::vector<tl::TimedLine>{{3, "Expected"}}, "duration cannot override performer");
     result = fetch(R"([{"trackName":"Song","artistName":"Artist","duration":240,"syncedLyrics":"[00:10]Wrong"},{"trackName":"Song","artistName":"Artist","duration":"nan","syncedLyrics":"[00:02]Unknown"}])", item);
     require(result.synced == std::vector<tl::TimedLine>{{2, "Unknown"}}, "unknown duration beats known mismatch");
+    result = fetch(R"([{"trackName":"Song","artistName":"Artist","duration":240,"syncedLyrics":"[00:10]Wrong arrangement"}])", item);
+    require(result.synced.empty() && result.plain == std::vector<std::string>{"Wrong arrangement"},
+            "known timing mismatches fall back to unsynchronized lyrics");
     int calls = 0;
     result = tl::fetch_lyrics(item, {}, [&](const std::string&, double, const tl::Cancel&) {
         return ++calls == 1 ? response(R"([{"id":1,"trackName":"Song","artistName":"Artist","duration":240,"syncedLyrics":"[00:10]Wrong"}])") : response(R"([{"id":2,"trackName":"Song","artistName":"Artist","duration":180,"syncedLyrics":"[00:02]Right"}])");
@@ -157,6 +181,13 @@ void test_errors_retries_and_cancellation() {
     result = tl::fetch_lyrics(track(), {}, [&](const std::string&, double, const tl::Cancel&) { ++calls; return tl::HttpResponse{503, {}, {}}; });
     require(calls == 3 && result.message.find("503") != std::string::npos, "retry attempts bounded");
     calls = 0;
+    result = tl::fetch_lyrics(track(), {}, [&](const std::string&, double, const tl::Cancel&) {
+        ++calls;
+        return tl::HttpResponse{0, {}, "Network is unreachable"};
+    });
+    require(calls == 3 && result.message.find("Network is unreachable") != std::string::npos,
+            "offline failures are bounded and preserve the network error");
+    calls = 0;
     result = tl::fetch_lyrics(track(), {}, [&](const std::string&, double, const tl::Cancel&) { ++calls; return tl::HttpResponse{429, {}, {}}; });
     require(calls == 1 && result.message.find("rate limiting") != std::string::npos, "rate limit does not retry");
     result = tl::fetch_lyrics(track(), {}, [](const std::string&, double, const tl::Cancel&) { return tl::HttpResponse{404, {}, {}}; });
@@ -189,6 +220,7 @@ int main() {
         test_candidates();
         test_exact_and_query_encoding();
         test_cover_and_plain_fallbacks();
+        test_readable_record_selection();
         test_duration_ranking();
         test_json_and_unicode();
         test_errors_retries_and_cancellation();

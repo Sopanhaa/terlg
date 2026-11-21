@@ -534,6 +534,10 @@ int live(const Options& options) {
                 double started = monotonic_seconds();
                 auto sample = current_track(options.player);
                 double sampled_at = (started + monotonic_seconds()) / 2;
+                const bool track_changed = sample.track.title != track.title || sample.track.artist != track.artist ||
+                    sample.track.album != track.album || sample.track.player != track.player ||
+                    sample.track.duration != track.duration || sample.track.track_id != track.track_id;
+                const bool sample_changed = track_changed || sample.status != status || !playback_error.empty();
                 if (sample.track.player != track.player || sample.track.track_id != track.track_id) scroll = -1;
                 clock.update(sample.track, sample.position, sample.status, sampled_at);
                 status = sample.status;
@@ -546,9 +550,16 @@ int live(const Options& options) {
                     last_key = track.lyrics_key();
                     scroll = -1;
                 }
-            } catch (const std::exception& error) { playback_error = error.what(); }
+                if (sample_changed) redraw = true;
+            } catch (const std::exception& error) {
+                const std::string current_error = error.what();
+                if (playback_error != current_error) {
+                    playback_error = current_error;
+                    redraw = true;
+                }
+            }
             next_poll = monotonic_seconds() + options.refresh;
-            redraw = true;
+            if (!command.empty()) redraw = true;
         }
         if (auto result = loader.poll(track)) { lyrics = std::move(*result); message = lyrics.message; redraw = true; }
         auto position = clock.position();
